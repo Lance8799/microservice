@@ -7,11 +7,11 @@ import io.vertx.core.eventbus.impl.codecs.StringMessageCodec;
 import io.vertx.core.file.FileSystem;
 import io.vertx.core.http.ClientAuth;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.pointer.JsonPointer;
-import io.vertx.core.net.JksOptions;
-import io.vertx.core.net.NetServer;
+import io.vertx.core.net.*;
 
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
@@ -303,6 +303,165 @@ public class CoreDemo {
         Object newJsonObject = JsonPointer.from("/foo").writeJson(jsonObject, "new"); // {"foo":"new","num":123,"bool":true}
         JsonPointer.from("/num").queryJson(newJsonObject); // new
     }
+
+    /**
+     * buffer 操作
+     */
+    public void buffer() {
+        // Create a buffer
+        Buffer buff = Buffer.buffer("some string", "UTF-8");
+
+        // Create a buffer from a byte[]
+        byte[] bytes = new byte[] {1, 3, 5};
+        Buffer buffByte = Buffer.buffer(bytes);
+
+        // Appending to a Buffer
+        buff.appendInt(1).appendString("text");
+
+        // Random access buffer writes
+        buff.setInt(100, 1);
+        buff.setString(0, "hello");
+
+        // Reading from a Buffer
+        for (int i = 0; i < buff.length(); i += 4) {
+            System.out.println("int value at " + i + " is " + buff.getInt(i));
+        }
+    }
+
+    /**
+     * TCP 服务端
+     */
+    public void tcpServer() {
+
+        NetServerOptions options = new NetServerOptions().setPort(4321);
+        NetServer netServer = vertx.createNetServer(options);
+
+        // Ignoring what is configured in the options.
+        // The default host is 0.0.0.0 which means 'listen on all available addresses' and the default port is 0
+        netServer.listen(1234, "localhost");
+
+        // If 0 is used as the listening port, the server will find an unused random port to listen on.
+        netServer.listen(0, "localhost", res -> {
+            if (res.succeeded()) {
+                System.out.println("Server is now listening on actual port: " + netServer.actualPort());
+            } else {
+                System.out.println("Failed to bind!");
+            }
+        });
+
+
+        // Notified of incoming connections
+        netServer.connectHandler(socket -> {
+            // Handle the connection in here
+
+            // Reading data from socket
+            socket.handler(buffer -> System.out.println("I received some bytes: " + buffer.length()));
+
+            // Writing data to socket
+            Buffer buffer = Buffer.buffer().appendFloat(12.34f).appendInt(123);
+            socket.write(buffer);
+
+            // Write a string using the specified encoding
+            socket.write("Some message", "UTF-16");
+
+            // Handling exceptions
+            socket.exceptionHandler(Throwable::printStackTrace);
+
+            // Closed handler
+            socket.closeHandler(v -> System.out.println("The socket has been closed"));
+
+            // The address of the handler is given by writeHandlerID
+            socket.writeHandlerID();
+
+            // Local and remote addresses
+            socket.remoteAddress();
+
+            // Sending files or resources from the classpath. This can be a very efficient way to send files
+            socket.sendFile("myFile.dat");
+
+        });
+
+        // Closing a TCP Server
+        netServer.close(result -> {
+            if (result.succeeded()) {
+                System.out.println("Server is now closed");
+            }
+        });
+
+
+        // Scaling - sharing TCP servers
+        for (int i = 0; i < 10; i++) {
+            NetServer server = vertx.createNetServer();
+            server.connectHandler(socket -> {
+                socket.handler(buffer -> {
+                    // Just echo back the data
+                    socket.write(buffer);
+                });
+            });
+            server.listen(1234, "localhost");
+        }
+        // or using verticles
+        DeploymentOptions deploymentOptions = new DeploymentOptions().setInstances(10);
+        vertx.deployVerticle("com.mycompany.MyVerticle", deploymentOptions);
+    }
+
+    /**
+     * TCP 客户端
+     */
+    public void tcpClient() {
+        // Creating a configuring TCP client
+        NetClientOptions options = new NetClientOptions()
+                .setConnectTimeout(10000)
+                // Currently Vert.x will not attempt to reconnect if a connection fails, reconnect attempts and interval only apply to creating initial connections.
+                // By default, multiple connection attempts are disabled.
+                .setReconnectAttempts(10)
+                .setReconnectInterval(500)
+                // Network activity is logged by Netty with the DEBUG level and with the io.netty.handler.logging.LoggingHandler name.
+                .setLogActivity(true);
+        NetClient client = vertx.createNetClient(options);
+
+        // Making connections
+        client.connect(4321, "localhost", res -> {
+            if (res.succeeded()) {
+                System.out.println("Connected!");
+                NetSocket socket = res.result();
+            } else {
+                System.out.println("Failed to connect: " + res.cause().getMessage());
+            }
+        });
+
+        // Configuring servers and clients to work with SSL/TLS
+        NetServerOptions sslOptions = new NetServerOptions().setSsl(true).setKeyStoreOptions(
+                new JksOptions()
+                        .setPath("/path/to/your/server-keystore.jks")
+                        .setPassword("password-of-your-keystore")
+        );
+        // Or
+        Buffer myKeyStoreAsABuffer = vertx.fileSystem().readFileBlocking("/path/to/your/server-keystore.pfx");
+        PfxOptions pfxOptions = new PfxOptions()
+                .setValue(myKeyStoreAsABuffer)
+                .setPassword("password-of-your-keystore");
+        NetServerOptions sslOptions2 = new NetServerOptions()
+                .setSsl(true)
+                .setPfxKeyCertOptions(pfxOptions);
+
+        // Using a proxy for client connections
+        NetClientOptions proxyOptions = new NetClientOptions()
+                .setProxyOptions(new ProxyOptions().setType(ProxyType.SOCKS5)
+                        .setHost("localhost").setPort(1080)
+                        .setUsername("username").setPassword("secret"));
+    }
+
+    /**
+     * Http 服务端
+     */
+    public void httpServer() {
+        HttpServerOptions options = new HttpServerOptions().setMaxWebsocketFrameSize(1000000);
+        HttpServer httpServer = vertx.createHttpServer(options);
+
+
+    }
+
 
     /**
      * 阻塞方法
